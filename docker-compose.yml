@@ -1,0 +1,156 @@
+---
+# Local development stack for invoice-pipeline.
+#
+# Default services (always up):
+#   redis     — Celery broker + rate limiter
+#   postgres  — Pipeline database
+#
+# Optional services (start with --profile):
+#   consumer          → docker compose --profile consumer up
+#   workers           → docker compose --profile workers up
+#   consumer+workers  → docker compose --profile consumer --profile workers up
+#
+# Quick start (infrastructure only):
+#   cp .env.example .env          # fill in SUPABASE_* and GEMINI_API_KEY
+#   docker compose up -d
+#
+# Run workers locally against the containerised infra:
+#   uv run celery -A invoice_pipeline.celery_app worker \
+#       --queues=queue.pdf --pool=prefork --concurrency=2
+
+x-worker-base: &worker-base
+  build:
+    context: ..                          # contabiliz/ — includes invoice-processors
+    dockerfile: invoice-pipeline/Dockerfile
+  env_file: .env
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+  # tmpfs for pdf2image rasterization — writes pages here, not to memory
+  tmpfs:
+    - /tmp:size=512m,mode=1777
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: invoice
+      POSTGRES_PASSWORD: invoice
+      POSTGRES_DB: invoice
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoice -d invoice"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Consumer ────────────────────────────────────────────────────────────
+
+  consumer:
+    <<: *worker-base
+    profiles: [consumer]
+    command: ["python", "-m", "invoice_pipeline.consumer"]
+    environment:
+      DATABASE_URL: postgresql://invoice:invoice@postgres:5432/invoice
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+  # ── Workers ─────────────────────────────────────────────────────────────
+  # Concurrency is reduced from production values for local dev.
+
+  worker-xml:
+    <<: *worker-base
+    profiles: [workers]
+    command:
+      - celery
+      - -A
+      - invoice_pipeline.celery_app
+      - worker
+      - --queues=queue.xml
+      - --pool=gevent
+      - --concurrency=10
+      - --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://invoice:invoice@postgres:5432/invoice
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+  worker-pdf:
+    <<: *worker-base
+    profiles: [workers]
+    command:
+      - celery
+      - -A
+      - invoice_pipeline.celery_app
+      - worker
+      - --queues=queue.pdf
+      - --pool=prefork
+      - --concurrency=2
+      - --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://invoice:invoice@postgres:5432/invoice
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+  worker-img:
+    <<: *worker-base
+    profiles: [workers]
+    command:
+      - celery
+      - -A
+      - invoice_pipeline.celery_app
+      - worker
+      - --queues=queue.img
+      - --pool=gevent
+      - --concurrency=10
+      - --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://invoice:invoice@postgres:5432/invoice
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      # GEMINI_API_KEY and GEMINI_RATE_LIMIT_RPM come from .env
+
+  worker-dlq:
+    <<: *worker-base
+    profiles: [workers]
+    command:
+      - celery
+      - -A
+      - invoice_pipeline.celery_app
+      - worker
+      - --queues=queue.dlq
+      - --pool=prefork
+      - --concurrency=2
+      - --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://invoice:invoice@postgres:5432/invoice
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+volumes:
+  redis-data:
+  postgres-data:
