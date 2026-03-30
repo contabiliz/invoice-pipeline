@@ -6,11 +6,7 @@ Step 3: processors.xml.process(content) → ProcessorResult
 Step 4: write result or terminal failure to DB
 
 Pool: gevent, concurrency 50 (set via WORKER_CONCURRENCY env var at launch)
-Max retries: 4 (network / transient errors only — XML failures are terminal)
-
-NOTE: This task delegates processing to invoice-processors.
-      The XML processor module (processors.xml) is not yet implemented.
-      When it is, the import below will resolve automatically.
+Max retries: 4 (network / transient errors only — XML structural failures are always terminal)
 """
 
 from __future__ import annotations
@@ -62,16 +58,7 @@ def _run(task, payload: XmlTaskPayload) -> None:
         raise task.retry(exc=exc) from exc
 
     # --- Process ---
-    try:
-        from processors.xml import process as xml_process  # type: ignore[import]
-    except ImportError as exc:
-        # invoice-processors does not yet have an XML processor.
-        # See: invoice-processors/src/processors/xml/ for the required interface.
-        # Expected signature: process(content: bytes) -> ProcessorResult
-        raise NotImplementedError(
-            "invoice-processors XML processor not implemented. "
-            "Create processors/xml/__init__.py with process(content: bytes) -> ProcessorResult."
-        ) from exc
+    from processors.xml import process as xml_process  # type: ignore[import]
 
     result = xml_process(content)
 
