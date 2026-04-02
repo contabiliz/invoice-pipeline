@@ -21,8 +21,8 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-invoice-models = { git = "https://github.com/contabiliz/invoice-models.git", tag = "v1.4.0" }
-invoice-processors = { git = "https://github.com/contabiliz/invoice-processors.git", tag = "v1.1.0" }
+invoice-models = { git = "https://github.com/contabiliz/invoice-models.git", tag = "v1.5.1" }
+invoice-processors = { git = "https://github.com/contabiliz/invoice-processors.git", tag = "v1.4.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/invoice_pipeline"]
