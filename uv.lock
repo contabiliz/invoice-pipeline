@@ -670,8 +670,8 @@ wheels = [
 
 [[package]]
 name = "invoice-models"
-version = "1.5.0"
-source = { git = "https://github.com/contabiliz/invoice-models.git?tag=v1.5.0#1d8043186ea7f46bff9efafa8b09bee1e2d5044a" }
+version = "1.5.1"
+source = { git = "https://github.com/contabiliz/invoice-models.git?tag=v1.5.1#64d27256d1f4aa7ac1fd9eead383acfc56885e6c" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -708,8 +708,8 @@ requires-dist = [
     { name = "gevent", specifier = ">=24.2" },
     { name = "google-genai", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "invoice-models", git = "https://github.com/contabiliz/invoice-models.git?tag=v1.5.0" },
-    { name = "invoice-processors", git = "https://github.com/contabiliz/invoice-processors.git?tag=v1.3.0" },
+    { name = "invoice-models", git = "https://github.com/contabiliz/invoice-models.git?tag=v1.5.1" },
+    { name = "invoice-processors", git = "https://github.com/contabiliz/invoice-processors.git?tag=v1.4.0" },
     { name = "lxml", specifier = ">=5.2" },
     { name = "pillow", specifier = ">=10.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
@@ -724,8 +724,8 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "invoice-processors"
-version = "1.3.0"
-source = { git = "https://github.com/contabiliz/invoice-processors.git?tag=v1.3.0#9e996cbb4d345ddf0b167af8325d04cf7acdd4e7" }
+version = "1.4.0"
+source = { git = "https://github.com/contabiliz/invoice-processors.git?tag=v1.4.0#0265954d68158a88668dbc0a7cd791248bc1c209" }
 dependencies = [
     { name = "invoice-models" },
     { name = "lxml" },
