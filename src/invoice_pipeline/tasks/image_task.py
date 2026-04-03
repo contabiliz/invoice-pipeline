@@ -118,18 +118,22 @@ def _run(task, payload: ImageTaskPayload) -> None:
     try:
         result = image_process(content, extractor)
     except Exception as exc:
+        # Prefer a structured status_code attribute on the exception (set by the
+        # processor). Fall back to substring matching for processors that raise
+        # plain exceptions with the status code embedded in the message.
+        status_code = getattr(exc, "status_code", None)
         error_str = str(exc)
         # Terminal Gemini errors — no retry
-        if "400" in error_str or "401" in error_str:
+        if status_code in (400, 401) or ("400" in error_str or "401" in error_str):
             logger.warning("task.gemini_terminal", error=error_str)
             db.fail_document(payload.document_id, payload.batch_id, f"gemini_terminal: {error_str}")
             return
         # Gemini rate limit (429)
-        if "429" in error_str:
+        if status_code == 429 or "429" in error_str:
             logger.warning("task.gemini_rate_limit")
             raise task.retry(exc=exc, countdown=60, max_retries=_GEMINI_429_MAX_RETRIES) from exc
         # Gemini server error (5xx)
-        if any(code in error_str for code in ("500", "502", "503", "504")):
+        if status_code in (500, 502, 503, 504) or any(code in error_str for code in ("500", "502", "503", "504")):
             logger.warning("task.gemini_server_error")
             raise task.retry(exc=exc, countdown=30, max_retries=_GEMINI_5XX_MAX_RETRIES) from exc
         raise
