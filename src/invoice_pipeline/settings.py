@@ -25,11 +25,11 @@ REDIS_URL: str = _get("REDIS_URL", "redis://localhost:6379/0")
 CELERY_BROKER_URL: str = _get("CELERY_BROKER_URL", REDIS_URL)
 
 # --- Database (PgBouncer transaction pooling endpoint) ---
-DATABASE_URL: str = _get("DATABASE_URL")
+DATABASE_URL: str = _require("DATABASE_URL")
 
 # --- Supabase Storage ---
-SUPABASE_STORAGE_URL: str = _get("SUPABASE_STORAGE_URL")
-SUPABASE_SERVICE_ROLE_KEY: str = _get("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_STORAGE_URL: str = _require("SUPABASE_STORAGE_URL")
+SUPABASE_SERVICE_ROLE_KEY: str = _require("SUPABASE_SERVICE_ROLE_KEY")
 STORAGE_BUCKET: str = _get("STORAGE_BUCKET", "documents")
 
 # --- Gemini (worker-img only) ---
