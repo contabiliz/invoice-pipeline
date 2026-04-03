@@ -61,7 +61,11 @@ def _run(task, payload: PdfTaskPayload) -> None:
     # --- Process ---
     from processors.pdf import process as pdf_process  # type: ignore[import]
 
-    result = pdf_process(content)
+    try:
+        result = pdf_process(content)
+    except Exception as exc:
+        logger.warning("task.process_failed", error=str(exc))
+        raise task.retry(exc=exc) from exc
 
     # --- Handle result ---
     if result.is_terminal_failure:

@@ -60,7 +60,11 @@ def _run(task, payload: XmlTaskPayload) -> None:
     # --- Process ---
     from processors.xml import process as xml_process  # type: ignore[import]
 
-    result = xml_process(content)
+    try:
+        result = xml_process(content)
+    except Exception as exc:
+        logger.warning("task.process_failed", error=str(exc))
+        raise task.retry(exc=exc) from exc
 
     # --- Persist ---
     if result.is_terminal_failure:
