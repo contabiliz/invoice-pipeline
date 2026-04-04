@@ -23,6 +23,7 @@ import asyncio
 import re
 from typing import Any
 
+import httpx
 import structlog
 
 from invoice_pipeline import brasilapi, db_async
@@ -50,107 +51,108 @@ async def _promote_documents_async() -> None:
     if not rows:
         return
 
-    logger.info("promotion.batch_start", count=len(rows))
+    async with brasilapi.make_client() as http_client:
+        logger.info("promotion.batch_start", count=len(rows))
 
-    # Phase 1: parse all documents and build the BrasilAPI identifier set in one pass.
-    # destinatario_cnpj is computed here once and carried forward — avoids re-classifying
-    # the same documento_destinatario string in the promotion loop.
-    parsed: list[tuple[dict[str, Any], dict[str, Any], str | None, str | None]] = []
-    identifiers: set[str] = set()
-    skipped = 0
+        # Phase 1: parse all documents and build the BrasilAPI identifier set in one pass.
+        # destinatario_cnpj is computed here once and carried forward — avoids re-classifying
+        # the same documento_destinatario string in the promotion loop.
+        parsed: list[tuple[dict[str, Any], dict[str, Any], str | None, str | None]] = []
+        identifiers: set[str] = set()
+        skipped = 0
 
-    for row in rows:
-        fields, missing = _parse_extracted_data(row["doc_type"], row["extracted_data"])
+        for row in rows:
+            fields, missing = _parse_extracted_data(row["doc_type"], row["extracted_data"])
 
-        if fields is None:
-            skipped += 1
-            logger.warning(
-                "promotion.document_skipped",
-                document_id=str(row["id"]),
-                doc_type=row["doc_type"],
-                missing_fields=missing,
+            if fields is None:
+                skipped += 1
+                logger.warning(
+                    "promotion.document_skipped",
+                    document_id=str(row["id"]),
+                    doc_type=row["doc_type"],
+                    missing_fields=missing,
+                )
+                continue
+
+            destinatario_cnpj, destinatario_cpf = _classify_destinatario(
+                fields["documento_destinatario"]
             )
-            continue
+            identifiers.add(fields["cnpj_emitente"])
+            if destinatario_cnpj is not None:
+                identifiers.add(destinatario_cnpj)
+            parsed.append((row, fields, destinatario_cnpj, destinatario_cpf))
 
-        destinatario_cnpj, destinatario_cpf = _classify_destinatario(
-            fields["documento_destinatario"]
-        )
-        identifiers.add(fields["cnpj_emitente"])
-        if destinatario_cnpj is not None:
-            identifiers.add(destinatario_cnpj)
-        parsed.append((row, fields, destinatario_cnpj, destinatario_cpf))
+        # Phase 2: batch-resolve entity names from BrasilAPI.
+        resolved = await _resolve_entity_names(identifiers, http_client)
 
-    # Phase 2: batch-resolve entity names from BrasilAPI.
-    resolved = await _resolve_entity_names(identifiers)
-
-    # Phase 3: promote each document using the pre-resolved name dict.
-    promoted = 0
-    failed = 0
-    for row, fields, destinatario_cnpj, destinatario_cpf in parsed:
-        # For CPF destinatários (11 digits) BrasilAPI returns None — fall back to
-        # whatever name the processor extracted, or a generic placeholder.
-        nome_emitente = resolved.get(fields["cnpj_emitente"]) or fields["nome_emitente_fallback"]
-        nome_destinatario = (
-            (resolved.get(destinatario_cnpj) if destinatario_cnpj is not None else None)
-            or fields["nome_destinatario_fallback"]
-            or "Não identificado"
-        )
-
-        if nome_emitente is None:
-            skipped += 1
-            logger.warning(
-                "promotion.document_skipped",
-                document_id=str(row["id"]),
-                doc_type=row["doc_type"],
-                missing_fields=["nome_emitente (api_failed, no_fallback)"],
-            )
-            continue
-
-        try:
-            await db_async.promote_document(
-                document_id=row["id"],
-                user_id=row["user_id"],
-                doc_type=row["doc_type"],
-                chave_acesso=fields["chave_acesso"],
-                cnpj_emitente=fields["cnpj_emitente"],
-                nome_emitente=nome_emitente,
-                destinatario_cnpj=destinatario_cnpj,
-                destinatario_cpf=destinatario_cpf,
-                nome_destinatario=nome_destinatario,
-                data_emissao=fields["data_emissao"],
-                numero_nota=fields["numero_nota"],
-                serie=fields["serie"],
-                valor_total=fields["valor_total"],
-                confidence=fields["confidence"],
-                items=fields["items"],
-            )
-            promoted += 1
-        except Exception:
-            failed += 1
-            logger.exception(
-                "promotion.document_failed",
-                document_id=str(row["id"]),
-                doc_type=row["doc_type"],
+        # Phase 3: promote each document using the pre-resolved name dict.
+        promoted = 0
+        failed = 0
+        for row, fields, destinatario_cnpj, destinatario_cpf in parsed:
+            # For CPF destinatários (11 digits) BrasilAPI returns None — fall back to
+            # whatever name the processor extracted, or a generic placeholder.
+            nome_emitente = resolved.get(fields["cnpj_emitente"]) or fields["nome_emitente_fallback"]
+            nome_destinatario = (
+                (resolved.get(destinatario_cnpj) if destinatario_cnpj is not None else None)
+                or fields["nome_destinatario_fallback"]
+                or "Não identificado"
             )
 
-    logger.info("promotion.batch_done", promoted=promoted, skipped=skipped, failed=failed)
+            if nome_emitente is None:
+                skipped += 1
+                logger.warning(
+                    "promotion.document_skipped",
+                    document_id=str(row["id"]),
+                    doc_type=row["doc_type"],
+                    missing_fields=["nome_emitente (api_failed, no_fallback)"],
+                )
+                continue
+
+            try:
+                await db_async.promote_document(
+                    document_id=row["id"],
+                    user_id=row["user_id"],
+                    doc_type=row["doc_type"],
+                    chave_acesso=fields["chave_acesso"],
+                    cnpj_emitente=fields["cnpj_emitente"],
+                    nome_emitente=nome_emitente,
+                    destinatario_cnpj=destinatario_cnpj,
+                    destinatario_cpf=destinatario_cpf,
+                    nome_destinatario=nome_destinatario,
+                    data_emissao=fields["data_emissao"],
+                    numero_nota=fields["numero_nota"],
+                    serie=fields["serie"],
+                    valor_total=fields["valor_total"],
+                    confidence=fields["confidence"],
+                    items=fields["items"],
+                )
+                promoted += 1
+            except Exception:
+                failed += 1
+                logger.exception(
+                    "promotion.document_failed",
+                    document_id=str(row["id"]),
+                    doc_type=row["doc_type"],
+                )
+
+        logger.info("promotion.batch_done", promoted=promoted, skipped=skipped, failed=failed)
 
 
 async def _resolve_entity_names(
     identifiers: set[str],
+    client: httpx.AsyncClient,
 ) -> dict[str, str | None]:
     """Fetch razao_social for a deduplicated set of CNPJ/CPF identifiers.
 
     Each identifier is fetched exactly once. BrasilAPI failures are caught
     per-identifier so a single network error does not abort the entire batch.
     """
-
     sem = asyncio.Semaphore(_CONCURRENT_REQUESTS)
 
     async def fetch_one(identifier: str) -> tuple[str, str | None]:
         async with sem:
             try:
-                name = await brasilapi.fetch_razao_social_async(identifier)
+                name = await brasilapi.fetch_razao_social_async(identifier, client)
                 return identifier, name
             except Exception:
                 logger.warning("brasilapi.fecth_failed", identifier=identifier)
